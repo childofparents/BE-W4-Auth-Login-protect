@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI, HTTPException, Header, Depends, Response
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -18,24 +19,20 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Initialize FastAPI
 app = FastAPI()
 
+# Define the security scheme
+security = HTTPBearer()
+
 # Stage 4: Turns protected route logic into a reusable middleware dependency
-def get_current_user(authorization: str = Header(default=None)):
-    # 1. Extract the token
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Access token required")
-
-    token = authorization.split(" ")[1]
-
-    if not token:
-        raise HTTPException(status_code=401, detail="Access token required")
+# Stage 5: Update reusable guard to use HTTPBearer instead of manually reading the raw header
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    # HTTPBearer automatically checks for the "Bearer " prefix and handles missing tokens
+    token = credentials.credentials
 
     try:
-        # 2. Ask Supabase whether it's real
+        # Ask Supabase whether the token is real
         user_response = supabase.auth.get_user(token)
-        # Return the verified user
         return user_response.user
     except Exception:
-        # 3. Reject if expired, tampered with, or invalid
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 # Stage 0: Runs server and connects to Supabase with no errors
