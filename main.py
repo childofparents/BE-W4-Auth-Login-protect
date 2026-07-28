@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Depends, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -17,6 +17,26 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Initialize FastAPI
 app = FastAPI()
+
+# Stage 4: Turns protected route logic into a reusable middleware dependency
+def get_current_user(authorization: str = Header(default=None)):
+    # 1. Extract the token
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Access token required")
+
+    token = authorization.split(" ")[1]
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Access token required")
+
+    try:
+        # 2. Ask Supabase whether it's real
+        user_response = supabase.auth.get_user(token)
+        # Return the verified user
+        return user_response.user
+    except Exception:
+        # 3. Reject if expired, tampered with, or invalid
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 # Stage 0: Runs server and connects to Supabase with no errors
 @app.get("/")
@@ -39,7 +59,7 @@ def signup(credentials: UserCredentials):
         )
 
     try:
-        # Call the Supabase sign-up method[cite: 1]
+        # Call the Supabase sign-up method
         response = supabase.auth.sign_up({
             "email": credentials.email,
             "password": credentials.password
@@ -52,7 +72,7 @@ def signup(credentials: UserCredentials):
             "created_at": str(response.user.created_at)
         } if response.user else {}
 
-        # On success, return 201 with the user object Supabase returns[cite: 1]
+        # On success, return 201 with the user object Supabase returns
         return JSONResponse(
             status_code=201,
             content={"user": user_data}
@@ -101,40 +121,27 @@ def public_info():
     # Returns a 200 OK automatically in FastAPI
     return {"message": "Welcome stranger! This info is public."}
 
-# Stage 3
+# Stage 3 & 4: Use the dependency defined at top to create the protected route
 # 2. Protected Endpoint (Verify user's access token)
 @app.get("/protected/profile")
-def protected_profile(authorization: str = Header(default=None)):
-    # 1. Extract the token from the header
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(
-            status_code=401,
-            content={"error": "Access token required"}
-        )
+def protected_profile(user= Depends(get_current_user)):
+    # The route body only runs AFTER the guard verifies the user
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "created_at": str(user.created_at)
+    }
 
-    # Extract the token (we will verify it in Stage 3)
-    token = authorization.split(" ")[1]
+# A brand new route using the same middleware
+@app.get("/protected/dashboard")
+def protected_dashboard(user = Depends(get_current_user)):
+    return {"message": f"Welcome to your dashboard, {user.email}!"}
 
-    if not token:
-        return JSONResponse(
-            status_code=401,
-            content={"error": "Access token required"}
-        )
+# Stage 4: User log out protected route
+@app.post("/auth/logout")
+def logout(user = Depends(get_current_user)):
+    # Call the sign-out method
+    supabase.auth.sign_out()
 
-    try:
-        # 2. Ask Supabase whether it's real
-        user_response = supabase.auth.get_user(token)
-        user = user_response.user
-
-        # 4. If it verifies -> return 200 with safe metadata
-        return {
-            "id": user.id,
-            "email": user.email,
-            "created_at": user.created_at
-        }
-    except Exception:
-        # 3. If expired, tampered with, or invalid -> return 401
-        return JSONResponse(
-            status_code=401,
-            content={"error": "Invalid or expired token"}
-        )
+    # Return 204 ("No Content") on success
+    return Response(status_code=204)
