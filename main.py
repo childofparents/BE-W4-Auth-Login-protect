@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -80,3 +80,33 @@ def login(credentials: UserCredentials):
             status_code=401,
             content={"error": "Invalid login credentials"}
         )
+
+
+# Stage 2: The public and protected gates
+# 1. Public Endpoint
+@app.get("/public/info")
+def public_info():
+    # Returns a 200 OK automatically in FastAPI
+    return {"message": "Welcome stranger! This info is public."}
+
+
+# 2. Protected Endpoint (Unverified)
+@app.get("/protected/profile")
+def protected_profile(authorization: str = Header(default=None)):
+    # Check if the header is missing, malformed, or doesn't start with "Bearer "
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Access token required"}
+        )
+
+    # Extract the token (we will verify it in Stage 3)
+    token = authorization.split(" ")[1]
+
+    if not token:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Access token required"}
+        )
+
+    return {"message": "Token presented! (Verification coming in Stage 3)"}
