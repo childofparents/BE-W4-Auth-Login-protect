@@ -32,25 +32,37 @@ class UserCredentials(BaseModel):
 
 @app.post("/auth/signup")
 def signup(credentials: UserCredentials):
-    # Validate: if email or password is missing/empty string -> 400 Bad Request
     if not credentials.email or not credentials.password:
         return JSONResponse(
             status_code=400,
             content={"error": "Email and password are required"}
         )
 
-    # Call the Supabase sign-up method
-    response = supabase.auth.sign_up({
-        "email": credentials.email,
-        "password": credentials.password
-    })
+    try:
+        # Call the Supabase sign-up method[cite: 1]
+        response = supabase.auth.sign_up({
+            "email": credentials.email,
+            "password": credentials.password
+        })
 
-    # On success, return 201 with the user object Supabase returns
-    # (Supabase's AuthResponse can be converted to a dictionary)
-    return JSONResponse(
-        status_code=201,
-        content=response.model_dump() if hasattr(response, 'model_dump') else response.dict()
-    )
+        # Safely extract user properties and convert the datetime to a string
+        user_data = {
+            "id": str(response.user.id),
+            "email": response.user.email,
+            "created_at": str(response.user.created_at)
+        } if response.user else {}
+
+        # On success, return 201 with the user object Supabase returns[cite: 1]
+        return JSONResponse(
+            status_code=201,
+            content={"user": user_data}
+        )
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=400,
+            content={"error": str(e)}
+        )
 
 
 @app.post("/auth/login")
@@ -89,11 +101,11 @@ def public_info():
     # Returns a 200 OK automatically in FastAPI
     return {"message": "Welcome stranger! This info is public."}
 
-
-# 2. Protected Endpoint (Unverified)
+# Stage 3
+# 2. Protected Endpoint (Verify user's access token)
 @app.get("/protected/profile")
 def protected_profile(authorization: str = Header(default=None)):
-    # Check if the header is missing, malformed, or doesn't start with "Bearer "
+    # 1. Extract the token from the header
     if not authorization or not authorization.startswith("Bearer "):
         return JSONResponse(
             status_code=401,
@@ -109,4 +121,20 @@ def protected_profile(authorization: str = Header(default=None)):
             content={"error": "Access token required"}
         )
 
-    return {"message": "Token presented! (Verification coming in Stage 3)"}
+    try:
+        # 2. Ask Supabase whether it's real
+        user_response = supabase.auth.get_user(token)
+        user = user_response.user
+
+        # 4. If it verifies -> return 200 with safe metadata
+        return {
+            "id": user.id,
+            "email": user.email,
+            "created_at": user.created_at
+        }
+    except Exception:
+        # 3. If expired, tampered with, or invalid -> return 401
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Invalid or expired token"}
+        )
